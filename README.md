@@ -1,21 +1,27 @@
 # Timeblock
 
-Timeblock turns a plain-English description of your week into a conflict-free, time-blocked schedule. Tell it something like "3 leetcode a day, gym twice a week, dentist Tuesday at 3pm" and it lays everything out for you. Your schedule stays in sync across a Windows desktop app and your phone, all on one account.
+Timeblock turns a plain-English description of your week into a conflict-free, time-blocked schedule. Tell it something like "3 leetcode a day, gym twice a week, dentist Tuesday at 3pm" and it lays everything out for you. Your schedule stays in sync across desktop (macOS, Windows, and Linux) and your phone, all on one account.
 
-## Download for desktop (Windows)
+## Download for desktop
 
-Get the latest installer from the releases page:
+Get the latest build from the releases page:
 
 https://github.com/lucasdotc/timeblock/releases/latest
 
-Two formats are available on the release:
+Every release includes installers for all three desktop platforms, built automatically by GitHub Actions.
 
-- the `.exe` setup file, the simplest option (about 2 MB)
-- the `.msi`, for managed or silent installs
+macOS
+- Download the `.dmg`, open it, and drag Timeblock to your Applications folder.
+- The build is not signed with an Apple certificate yet, so the first time you open it, right-click the app and choose Open to get past Gatekeeper.
 
-Run either one, then launch Timeblock from your Start menu. The first time you open it, Windows may show a SmartScreen notice because the app is not code-signed yet. Click "More info", then "Run anyway".
+Windows
+- Download the `.exe` setup file (the simplest option) or the `.msi` for managed installs, run it, then launch Timeblock from your Start menu.
+- Windows may show a SmartScreen notice on first run because the app is not code-signed yet. Click "More info", then "Run anyway".
 
-The desktop version is a native window and talks to the same backend as every other version, so nothing lives only on one machine.
+Linux
+- Download the `.AppImage`, make it executable, and run it, or install the `.deb` on a Debian-based distribution.
+
+Each version is a native window and talks to the same backend, so your schedule stays current everywhere you use it.
 
 ## Use it on your phone with Expo Go
 
