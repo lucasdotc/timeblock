@@ -40,17 +40,35 @@ export function App() {
 }
 
 function Login() {
+  const [mode, setMode] = useState<"signin" | "signup">("signin");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const isSignup = mode === "signup";
+
+  function swap() {
+    setMode(isSignup ? "signin" : "signup");
+    setError(null);
+    setNotice(null);
+  }
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
     setBusy(true);
     setError(null);
-    const { error } = await supabase.auth.signInWithPassword({ email, password });
-    if (error) setError(error.message);
+    setNotice(null);
+    if (isSignup) {
+      const { data, error } = await supabase.auth.signUp({ email, password });
+      if (error) setError(error.message);
+      // If email confirmation is on, there's no session yet — tell them to check mail.
+      else if (!data.session) setNotice("Account created — check your email to confirm, then sign in.");
+      // Otherwise onAuthStateChange logs them straight in.
+    } else {
+      const { error } = await supabase.auth.signInWithPassword({ email, password });
+      if (error) setError(error.message);
+    }
     setBusy(false);
   }
 
@@ -61,13 +79,18 @@ function Login() {
           <Logo />
           <h1>Timeblock</h1>
         </div>
-        <p className="sub">Sign in to plan your week.</p>
+        <p className="sub">{isSignup ? "Create an account to plan your week." : "Sign in to plan your week."}</p>
         <label htmlFor="email">Email</label>
         <input id="email" type="email" placeholder="you@example.com" value={email} onChange={(e) => setEmail(e.target.value)} required autoFocus />
         <label htmlFor="password">Password</label>
-        <input id="password" type="password" placeholder="••••••••" value={password} onChange={(e) => setPassword(e.target.value)} required />
+        <input id="password" type="password" placeholder="••••••••" value={password} onChange={(e) => setPassword(e.target.value)} required minLength={6} autoComplete={isSignup ? "new-password" : "current-password"} />
+        {isSignup && <span className="faint small" style={{ marginTop: -6 }}>At least 6 characters.</span>}
         {error && <div className="error small">{error}</div>}
-        <button type="submit" disabled={busy}>{busy ? "Signing in…" : "Sign in"}</button>
+        {notice && <div className="notice small">{notice}</div>}
+        <button type="submit" disabled={busy}>{busy ? (isSignup ? "Creating…" : "Signing in…") : isSignup ? "Create account" : "Sign in"}</button>
+        <button type="button" className="link-btn" onClick={swap}>
+          {isSignup ? "Already have an account? Sign in" : "New here? Create an account"}
+        </button>
       </form>
     </div>
   );

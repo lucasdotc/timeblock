@@ -130,6 +130,12 @@ input:focus, textarea:focus { outline: none; border-color: var(--accent); backgr
 .login .sub { margin: 0 0 var(--s-3); color: var(--muted); font-size: var(--text-sm); }
 .login label { font-size: var(--text-xs); font-weight: 500; color: var(--muted); margin-bottom: -6px; }
 .login button { margin-top: var(--s-2); padding: 11px; }
+.login .link-btn {
+  margin-top: var(--s-1); padding: 6px; background: transparent; color: var(--muted);
+  font-weight: 500; font-size: var(--text-sm); border: none;
+}
+.login .link-btn:hover:not(:disabled) { color: var(--accent); background: transparent; }
+.notice { color: var(--ok); background: oklch(0.74 0.13 155 / 0.1); border: 1px solid oklch(0.74 0.13 155 / 0.3); border-radius: var(--radius-sm); padding: 8px 11px; }
 
 /* ============================================================================
    App shell

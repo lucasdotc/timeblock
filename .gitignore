@@ -4,3 +4,5 @@ node_modules/
 dist/
 *.log
 sbpw.txt
+DESKTOP.md
+install-desktop-buildtools.ps1

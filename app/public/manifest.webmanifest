@@ -1,0 +1,13 @@
+{
+  "name": "Timeblock",
+  "short_name": "Timeblock",
+  "description": "AI-powered time-blocking for your week.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#0e1417",
+  "theme_color": "#0e1417",
+  "icons": [
+    { "src": "/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable" }
+  ]
+}
