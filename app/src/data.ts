@@ -13,6 +13,7 @@ export interface TaskRow extends Task {
 // The deployed Supabase Edge Function (key held server-side). To fall back to
 // the local dev server, set this to "http://localhost:8787/parse".
 const PARSE_URL = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/parse`;
+const AGENT_URL = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/agent`;
 
 export interface EventInput {
   title: string;
@@ -301,6 +302,179 @@ export async function parse(request: string, scope: "day" | "week" = "week"): Pr
   });
   if (!res.ok) throw new Error(`parse error (${res.status})`);
   return res.json();
+}
+
+// ---------------------------------------------------------------------------
+// Agentic assistant. A server-side Claude tool-use loop returns a PLAN of
+// operations; the client applies them through the existing propose/apply flow,
+// so the deterministic engine still does placement and nothing persists until
+// the user confirms.
+// ---------------------------------------------------------------------------
+
+export type AgentOp =
+  | { op: "add_task"; task: { title: string; durationMin: number; quota: number; period: "day" | "week"; fixedTimeMin: number | null } }
+  | { op: "add_event"; event: EventInput }
+  | { op: "edit_task"; edit: { taskId: string; scope: "day" | "week"; day: string | null; timeMin: number | null; durationMin: number | null; period: "day" | "week" | null; quota: number | null } }
+  | { op: "rearrange"; rearrange: { scope: "day" | "week"; day: string | null; orderedTaskIds: string[] } }
+  | { op: "delete_task"; taskId: string }
+  | { op: "move_occurrence"; taskId: string; fromDate: string; toDate: string; timeMin: number | null };
+
+export interface AgentResult {
+  operations: AgentOp[];
+  summary: string;
+}
+
+const fmtTimeOfDay = (m: number) => {
+  const h = Math.floor(m / 60), mm = m % 60;
+  const ap = h < 12 ? "am" : "pm";
+  const h12 = h % 12 === 0 ? 12 : h % 12;
+  return `${h12}:${String(mm).padStart(2, "0")}${ap}`;
+};
+
+/** Placed blocks for the current week, the schedule the agent reads with get_schedule. */
+async function currentWeekContext(): Promise<any[]> {
+  const start = weekStart();
+  const end = new Date(start.getTime() + 7 * 86_400_000);
+  const { data } = await supabase
+    .from("scheduled_blocks")
+    .select("id, task_id, title, starts_at, ends_at, status, pinned")
+    .eq("status", "planned")
+    .gte("starts_at", start.toISOString())
+    .lt("starts_at", end.toISOString());
+  const p = (n: number) => String(n).padStart(2, "0");
+  return (data ?? []).map((b: any) => {
+    const s = new Date(b.starts_at), e = new Date(b.ends_at);
+    return {
+      id: b.id, taskId: b.task_id, title: b.title,
+      date: `${s.getFullYear()}-${p(s.getMonth() + 1)}-${p(s.getDate())}`,
+      weekday: (s.getDay() + 6) % 7,
+      startMin: s.getHours() * 60 + s.getMinutes(),
+      endMin: e.getHours() * 60 + e.getMinutes(),
+      status: b.status, pinned: b.pinned,
+    };
+  });
+}
+
+/** Run the server-side agent loop; returns a plan of operations plus a summary. */
+export async function runAgent(request: string, scope: "day" | "week" = "week"): Promise<AgentResult> {
+  const [fixedBlocks, existingTasks, currentBlocks] = await Promise.all([listFixedBlocks(), listTasks(), currentWeekContext()]);
+  const anon = import.meta.env.VITE_SUPABASE_ANON_KEY as string;
+  const { data } = await supabase.auth.getSession();
+  const token = data.session?.access_token ?? anon;
+  const res = await fetch(AGENT_URL, {
+    method: "POST",
+    headers: { "content-type": "application/json", authorization: `Bearer ${token}`, apikey: anon },
+    body: JSON.stringify({ request, context: { now: localNow(), scope, fixedBlocks, existingTasks, currentBlocks } }),
+  });
+  if (!res.ok) throw new Error(`agent error (${res.status})`);
+  const out = await res.json();
+  return { operations: out.operations ?? [], summary: out.summary ?? "" };
+}
+
+/** One-line human descriptions of a plan, for the confirm view. */
+export async function describeOps(ops: AgentOp[]): Promise<string[]> {
+  const tasks = await listTasks();
+  const nameOf = (id: string) => tasks.find((t) => t.id === id)?.title ?? "a task";
+  return ops.map((o) => {
+    if (o.op === "add_task") return `Add ${o.task.title} — ${o.task.quota}×/${o.task.period}, ${o.task.durationMin} min${o.task.fixedTimeMin != null ? ` at ${fmtTimeOfDay(o.task.fixedTimeMin)}` : ""}`;
+    if (o.op === "add_event") return `Add event: ${o.event.title}`;
+    if (o.op === "delete_task") return `Remove ${nameOf(o.taskId)}`;
+    if (o.op === "rearrange") return `Reorder: ${o.rearrange.orderedTaskIds.map(nameOf).join(" → ")}`;
+    if (o.op === "move_occurrence") return `Move ${nameOf(o.taskId)} to ${o.toDate}${o.timeMin != null ? ` at ${fmtTimeOfDay(o.timeMin)}` : ""}`;
+    const e = o.edit;
+    const parts: string[] = [];
+    if (e.period || e.quota != null) parts.push(`${e.quota ?? "same"}×/${e.period ?? "period"}`);
+    if (e.durationMin != null) parts.push(`${e.durationMin} min`);
+    if (e.timeMin != null) parts.push(`at ${fmtTimeOfDay(e.timeMin)}`);
+    return `Change ${nameOf(e.taskId)}${parts.length ? " — " + parts.join(", ") : ""}`;
+  });
+}
+
+/** Apply an agent plan by routing each operation through existing primitives, then re-planning. */
+export async function applyPlan(ops: AgentOp[]): Promise<{ placed: number; conflicts: string[] }> {
+  const deletes = ops.flatMap((o) => (o.op === "delete_task" ? [o.taskId] : []));
+  const addTasks = ops.flatMap((o) => (o.op === "add_task" ? [o.task] : []));
+  const addEvents = ops.flatMap((o) => (o.op === "add_event" ? [o.event] : []));
+  const edits = ops.flatMap((o) => (o.op === "edit_task" ? [o.edit] : []));
+  const moves = ops.flatMap((o) => (o.op === "move_occurrence" ? [o] : []));
+  const rearranges = ops.flatMap((o) => (o.op === "rearrange" ? [o.rearrange] : []));
+
+  let last: { placed: number; conflicts: string[] } = { placed: 0, conflicts: [] };
+
+  if (deletes.length) { await deleteTasks(deletes); last = await rescheduleAndSave(); }
+  if (addTasks.length || addEvents.length) {
+    const proposed: ProposedTask[] = addTasks.map((t) => ({
+      id: `${t.title.trim().toLowerCase().replace(/\s+/g, "-").slice(0, 30)}-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+      title: t.title, durationMin: t.durationMin, quota: t.quota, period: t.period,
+      ...(t.fixedTimeMin != null ? { fixedTimeMin: t.fixedTimeMin } : {}),
+    }));
+    last = await (await proposeAdd(proposed, addEvents)).apply();
+  }
+  if (edits.length) {
+    const editInputs: EditInput[] = edits.map((e) => ({ taskId: e.taskId, scope: e.scope, day: e.day, timeMin: e.timeMin, durationMin: e.durationMin, period: e.period, quota: e.quota, summary: "" }));
+    last = await (await proposeEdit(editInputs)).apply();
+  }
+  if (moves.length) {
+    for (const m of moves) await moveOccurrence(m.taskId, m.fromDate, m.toDate, m.timeMin);
+    last = await rescheduleAndSave();
+  }
+  for (const r of rearranges) {
+    last = await (await proposeRearrange({ ...r, summary: "" })).apply();
+  }
+  return last;
+}
+
+/**
+ * Move one occurrence of a task from fromDate to toDate. The source occurrence is
+ * marked skipped so the re-plan keeps that day clear of this task, and a pinned
+ * block is placed on the target day (at timeMin, or the source's own time). Both
+ * dates are normalized to the current week.
+ */
+export async function moveOccurrence(taskId: string, fromDate: string, toDate: string, timeMin: number | null): Promise<void> {
+  const uid = await userId();
+  const task = await getTask(taskId);
+  const from = weekdayInThisWeek(`${fromDate}T00:00`).date;
+  const fromEnd = new Date(from.getTime() + 86_400_000);
+  const { data: rows } = await supabase
+    .from("scheduled_blocks")
+    .select("id, starts_at, ends_at")
+    .eq("task_id", taskId)
+    .eq("status", "planned")
+    .gte("starts_at", from.toISOString())
+    .lt("starts_at", fromEnd.toISOString())
+    .limit(1);
+  const src = rows?.[0] as any;
+  const dur = task?.durationMin ?? (src ? Math.round((new Date(src.ends_at).getTime() - new Date(src.starts_at).getTime()) / 60_000) : 30);
+  const srcTime = src ? new Date(src.starts_at).getHours() * 60 + new Date(src.starts_at).getMinutes() : 9 * 60;
+  const t = timeMin != null ? timeMin : srcTime;
+  const target = weekdayInThisWeek(`${toDate}T00:00`).date;
+  const s = new Date(target.getTime() + t * 60_000);
+  if (src) await setBlockStatus(src.id, "skipped");
+  await supabase.from("scheduled_blocks").insert({
+    user_id: uid, task_id: taskId, title: task?.title ?? "Task",
+    starts_at: s.toISOString(), ends_at: new Date(s.getTime() + dur * 60_000).toISOString(),
+    status: "planned", pinned: true,
+  });
+}
+
+/**
+ * Decide whether a plan can apply without a confirm click — only when it is pure
+ * additions that fit the week with nothing existing moving. Anything that edits,
+ * deletes, rearranges, or moves always returns autoApply false. Also surfaces the
+ * moves an add would cause, so the confirm can name them.
+ */
+export async function previewPlan(ops: AgentOp[]): Promise<{ autoApply: boolean; moves: { title: string; from: string; to: string }[]; removes: string[] }> {
+  const onlyAdds = ops.length > 0 && ops.every((o) => o.op === "add_task" || o.op === "add_event");
+  if (!onlyAdds) return { autoApply: false, moves: [], removes: [] };
+  const addTasks = ops.flatMap((o) => (o.op === "add_task" ? [o.task] : []));
+  const addEvents = ops.flatMap((o) => (o.op === "add_event" ? [o.event] : []));
+  const proposed: ProposedTask[] = addTasks.map((t) => ({
+    id: `preview-${Math.random().toString(36).slice(2, 8)}`,
+    title: t.title, durationMin: t.durationMin, quota: t.quota, period: t.period,
+    ...(t.fixedTimeMin != null ? { fixedTimeMin: t.fixedTimeMin } : {}),
+  }));
+  const p = await proposeAdd(proposed, addEvents); // in-memory only; nothing persists without apply()
+  return { autoApply: p.moves.length === 0 && p.removes.length === 0, moves: p.moves, removes: p.removes };
 }
 
 /** Current time as a local naive string with weekday, for resolving relative dates. */
