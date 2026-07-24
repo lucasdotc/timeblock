@@ -23,6 +23,8 @@ Linux
 
 Each version is a native window and talks to the same backend, so your schedule stays current everywhere you use it.
 
+After the first install, the desktop app keeps itself up to date. On launch it checks for a newer release, and if one exists it offers to install it and restart, so you download by hand only once.
+
 ## Use it on your phone with Expo Go
 
 The phone version runs through Expo Go, so you can try it without a store install.
@@ -53,8 +55,9 @@ Tell the assistant what you want. The chat box understands everyday requests:
 - Change things: "move gym to 6pm", "make leetcode 45 minutes", "soccer every day now"
 - Reorder a day: "do soccer after job applications but before the gym"
 - Remove tasks: "delete yoga"
+- Ask for several changes at once: "clear my afternoon and push everything to tomorrow", or "cancel gym and add yoga three times a week"
 
-Timeblock fits everything into your open time, keeps your fixed hours clear, and asks for confirmation before it moves anything that is already on your calendar.
+The assistant reads your current schedule and works out the full set of changes for a request, then Timeblock fits everything into your open time and keeps your fixed hours clear. A quick add that fits just goes in. Anything that moves blocks you already have is shown for you to confirm first.
 
 Set your fixed hours. Under Fixed hours, add the blocks that stay put, such as work, sleep, or classes. The scheduler always plans around them, and you can choose whether they appear on the calendar.
 
@@ -62,4 +65,4 @@ Review and adjust. The Calendar and Today views show your plan. Open any block t
 
 ## How it works
 
-Timeblock keeps language and logic separate. Claude reads what you type and turns it into a structured request. A deterministic scheduling engine then places each task into a legal open slot, reserves travel and focus buffers so nothing double-books, and reports anything that cannot fit instead of dropping it. The desktop app, the phone app, and the web build all share that engine and a Supabase backend, which is why one account keeps every device current.
+Timeblock keeps language and logic separate. Claude reads what you type, looks at your current plan, and works out the changes to make by calling a set of scheduling tools. A deterministic engine then places each change into a legal open slot, reserves travel and focus buffers so nothing double-books, and reports anything that cannot fit instead of dropping it. Claude decides what should happen, and the engine decides the exact times, which is why the results stay dependable. The desktop app, the phone app, and the web build all share that engine and a Supabase backend, so one account keeps every device current.
