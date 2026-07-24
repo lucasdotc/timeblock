@@ -57,7 +57,7 @@ export function createAnthropicLlm(client: Anthropic = new Anthropic()): LlmClie
   return {
     async proposeTasks({ request, context }): Promise<ParseResult> {
       const message = await client.messages.parse({
-        model: "claude-opus-4-8",
+        model: "claude-sonnet-5",
         max_tokens: 16000,
         thinking: { type: "adaptive" },
         system: SYSTEM_PROMPT,
